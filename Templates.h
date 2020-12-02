@@ -68,10 +68,6 @@ const char mainPage[] = "<!DOCTYPE html>\
                         botStatus.style = 'color: red';\
                         botStatus.textContent = 'Obstacle on the Front Detected';\
                         break;\
-                    case 'rearObstacle':\
-                        botStatus.style = 'color: red';\
-                        botStatus.textContent = 'Obstacle on the Rear Detected';\
-                        break;\
                     default:\
                         botStatus.style = 'color: lime';\
                         botStatus.textContent = 'No Obstacles';\
