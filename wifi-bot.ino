@@ -1,11 +1,28 @@
 #include <ESP8266WiFi.h>
-#include <WebSocketsServer.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+#include <WebSocketsServer.h>
+#include <NewPing.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <WiFiClient.h>
 #include "Templates.h"
 
-// Websocket and WebServer
+// Web Config
+String serverURL = "http://10.10.79.150/send_data";
+String botName = "xbot";
+String botKey = "395686";
+
+// Websocket, WebServer and HTTP
 WebSocketsServer wsServer = WebSocketsServer(81);
 ESP8266WebServer webServer(80);
+HTTPClient httpClient;
+WiFiClient wifiClient;
+
+// NTP Config
+WiFiUDP ntpUDP;
+const long utcOffsetInSeconds = 28800;
+NTPClient timeClient(ntpUDP, "asia.pool.ntp.org", utcOffsetInSeconds);
 
 // L298N Control Pins
 const int motorLF = 14;
@@ -13,11 +30,20 @@ const int motorLB = 12;
 const int motorRF = 13;
 const int motorRB = 15;
 
-// IR Sensor Pins
-const int irFront = 5;
-const int irRear = 4;
-int frontObstacle;
-int rearObstacle;
+// Ultrasonic Sensor and Pins
+const int trigPin = 4;
+const int echoPin = 5;
+int obstacleDist;
+NewPing ultraSonic = NewPing(trigPin, echoPin);
+
+// Air Quality Sensor Pins
+const int airQualityPin = A0;
+int airQualityReading;
+
+// Interval
+unsigned long startMillis;
+unsigned long currentMillis;
+const unsigned long period = 1000;
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 {
@@ -38,23 +64,31 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     case WStype_TEXT:
         Serial.printf("[%u] get Text: %s\n", num, payload);
         Serial.println((char *)payload);
+        obstacleDist = ultraSonic.ping_cm();
         if (String((char *)payload) == "forward")
-            if (frontObstacle)
-            {
-                wsServer.sendTXT(num, "good");
-                moveForward();
-            }
-            else
+        {
+            if (obstacleDist > 0 && obstacleDist < 60)
             {
                 wsServer.sendTXT(num, "frontObstacle");
                 moveStop();
             }
+            else
+            {
+                wsServer.sendTXT(num, "good");
+                moveForward();
+            }
+        }
         else if (String((char *)payload) == "backward")
             moveBackward();
         else if (String((char *)payload) == "left")
             turnLeft();
         else if (String((char *)payload) == "right")
             turnRight();
+        else if (String((char *)payload) == "readAirQuality")
+        {
+            airQualityReading = analogRead(airQualityPin);
+            wsServer.sendTXT(num, (char *)airQualityReading);
+        }
         else
             moveStop();
         break;
@@ -64,9 +98,32 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 void setup()
 {
     Serial.begin(9600);
+    WiFi.mode(WIFI_OFF);
+    delay(1000);
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.hostname("harriebot");
     Serial.println(WiFi.softAP("wifi-bot", "hackerm4n") ? "AP spawn" : "AP spawn failed");
+    Serial.println(WiFi.begin("wifi22", "justdoit123") ? "STA spawn" : "STA spawn failed");
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+
     Serial.print("AP IP: ");
     Serial.println(WiFi.softAPIP());
+
+    Serial.print("STA IP: ");
+    Serial.println(WiFi.localIP());
+
+    Serial.print("STA Gateway: ");
+    Serial.println(WiFi.gatewayIP());
+
+    timeClient.begin();
+    timeClient.update();
+    startMillis = millis();
+
+    Serial.println(timeClient.getDay());
 
     wsServer.begin();
     wsServer.onEvent(webSocketEvent);
@@ -76,8 +133,6 @@ void setup()
     pinMode(motorRF, OUTPUT);
     pinMode(motorRB, OUTPUT);
 
-    pinMode(irFront, INPUT);
-
     webServer.on("/", handleRoot);
     webServer.onNotFound(handleNotFound);
     webServer.begin();
@@ -85,19 +140,18 @@ void setup()
 
 void loop()
 {
-    frontObstacle = digitalRead(irFront);
     wsServer.loop();
     webServer.handleClient();
-    // moveForward();
-    // delay(2000);
-    // moveBackward();
-    // delay(2000);
-    // turnLeft();
-    // delay(2000);
-    // turnRight();
-    // delay(2000);
-    // moveStop();
-    // delay(2000);
+
+    
+    if(timeClient.getSeconds() % 20 == 0) {
+        currentMillis = millis();
+        if (currentMillis - startMillis >= period) {
+            sendData();
+            startMillis = currentMillis;
+        }
+            
+    }
 }
 
 void moveStop()
@@ -149,4 +203,19 @@ void handleRoot()
 void handleNotFound()
 {
     webServer.send(404, "text/html", "<h1>Fuck Off!</h1>");
+}
+
+void sendData() {
+    if(WiFi.status() == WL_CONNECTED) {
+        String payload;
+        int reading = analogRead(A0);
+        payload = "name=" + botName + "&key=" + botKey + "&air_quality=" + reading;
+        httpClient.begin(wifiClient, serverURL);
+        httpClient.addHeader("Content-Type", "application/x-www-form-urlencoded");
+        Serial.println(timeClient.getFormattedTime());
+        Serial.println(payload);
+        int responseCode = httpClient.POST(payload);
+        Serial.println(httpClient.getString());
+        httpClient.end();
+    }
 }
