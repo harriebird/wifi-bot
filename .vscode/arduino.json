@@ -3,5 +3,5 @@
     "configuration": "xtal=160,vt=flash,exception=disabled,ssl=all,eesz=4M,led=2,ip=lm2f,dbg=Disabled,lvl=None____,wipe=none,baud=3000000",
     "port": "/dev/ttyUSB0",
     "sketch": "wifi-bot.ino",
-    "output": "../build"
+    "output": "./build"
 }
